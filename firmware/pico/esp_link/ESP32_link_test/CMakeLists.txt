@@ -47,6 +47,9 @@ pico_enable_stdio_usb(ESP32_link_test 1)
 # Add the standard library to the build
 target_link_libraries(ESP32_link_test
         pico_stdlib)
+target_link_libraries(ESP32_link_test
+        pico_stdlib
+        hardware_spi)
 
 # Add the standard include files to the build
 target_include_directories(ESP32_link_test PRIVATE

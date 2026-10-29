@@ -1,15 +1,148 @@
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
-#include "hardware/uart.h"
-#include "hardware/gpio.h"
 #include "pico/stdio_usb.h"
+#include "hardware/uart.h"
+#include "hardware/spi.h"
+#include "hardware/gpio.h"
 
+// ---------- ESP32 link (UART1) ----------
 #define ESP_UART uart1
-#define ESP_TX   8      // Pico GP8 -> ESP32 pin 0 (RX)
-#define ESP_RX   9      // Pico GP9 <- ESP32 pin 1 (TX)
+#define ESP_TX   8          // Pico GP8 -> ESP32 pin 0 (RX)
+#define ESP_RX   9          // Pico GP9 <- ESP32 pin 1 (TX)
 #define BAUD     115200
 
+// ---------- LCD (ST7789 on SPI0) ----------
+#define LCD_SPI    spi0
+#define LCD_SCK    2
+#define LCD_MOSI   3
+#define LCD_CS     26
+#define LCD_DC     7
+#define LCD_RES    6
+#define LCD_W      240
+#define LCD_H      320
+#define LCD_INVERT 1        // set to 0 if the colours look inverted
+
+#define BLACK  0x0000
+#define WHITE  0xFFFF
+#define YELLOW 0xFFE0
+#define GREEN  0x07E0
+#define RED    0xF800
+
+// ---------- 5x7 font, ASCII 32..126 ----------
+static const uint8_t font5x7[95][5] = {
+ {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},{0x14,0x7F,0x14,0x7F,0x14},
+ {0x24,0x2A,0x7F,0x2A,0x12},{0x23,0x13,0x08,0x64,0x62},{0x36,0x49,0x55,0x22,0x50},{0x00,0x05,0x03,0x00,0x00},
+ {0x00,0x1C,0x22,0x41,0x00},{0x00,0x41,0x22,0x1C,0x00},{0x08,0x2A,0x1C,0x2A,0x08},{0x08,0x08,0x3E,0x08,0x08},
+ {0x00,0x50,0x30,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},{0x00,0x60,0x60,0x00,0x00},{0x20,0x10,0x08,0x04,0x02},
+ {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4B,0x31},
+ {0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},{0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
+ {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E},{0x00,0x36,0x36,0x00,0x00},{0x00,0x56,0x36,0x00,0x00},
+ {0x00,0x08,0x14,0x22,0x41},{0x14,0x14,0x14,0x14,0x14},{0x41,0x22,0x14,0x08,0x00},{0x02,0x01,0x51,0x09,0x06},
+ {0x32,0x49,0x79,0x41,0x3E},{0x7E,0x11,0x11,0x11,0x7E},{0x7F,0x49,0x49,0x49,0x36},{0x3E,0x41,0x41,0x41,0x22},
+ {0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},{0x7F,0x09,0x09,0x01,0x01},{0x3E,0x41,0x41,0x51,0x32},
+ {0x7F,0x08,0x08,0x08,0x7F},{0x00,0x41,0x7F,0x41,0x00},{0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},
+ {0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x04,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},{0x3E,0x41,0x41,0x41,0x3E},
+ {0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},{0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},
+ {0x01,0x01,0x7F,0x01,0x01},{0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x7F,0x20,0x18,0x20,0x7F},
+ {0x63,0x14,0x08,0x14,0x63},{0x03,0x04,0x78,0x04,0x03},{0x61,0x51,0x49,0x45,0x43},{0x00,0x00,0x7F,0x41,0x41},
+ {0x02,0x04,0x08,0x10,0x20},{0x41,0x41,0x7F,0x00,0x00},{0x04,0x02,0x01,0x02,0x04},{0x40,0x40,0x40,0x40,0x40},
+ {0x00,0x01,0x02,0x04,0x00},{0x20,0x54,0x54,0x54,0x78},{0x7F,0x48,0x44,0x44,0x38},{0x38,0x44,0x44,0x44,0x20},
+ {0x38,0x44,0x44,0x48,0x7F},{0x38,0x54,0x54,0x54,0x18},{0x08,0x7E,0x09,0x01,0x02},{0x08,0x14,0x54,0x54,0x3C},
+ {0x7F,0x08,0x04,0x04,0x78},{0x00,0x44,0x7D,0x40,0x00},{0x20,0x40,0x44,0x3D,0x00},{0x00,0x7F,0x10,0x28,0x44},
+ {0x00,0x41,0x7F,0x40,0x00},{0x7C,0x04,0x18,0x04,0x78},{0x7C,0x08,0x04,0x04,0x78},{0x38,0x44,0x44,0x44,0x38},
+ {0x7C,0x14,0x14,0x14,0x08},{0x08,0x14,0x14,0x18,0x7C},{0x7C,0x08,0x04,0x04,0x08},{0x48,0x54,0x54,0x54,0x20},
+ {0x04,0x3F,0x44,0x40,0x20},{0x3C,0x40,0x40,0x20,0x7C},{0x1C,0x20,0x40,0x20,0x1C},{0x3C,0x40,0x30,0x40,0x3C},
+ {0x44,0x28,0x10,0x28,0x44},{0x0C,0x50,0x50,0x50,0x3C},{0x44,0x64,0x54,0x4C,0x44},{0x00,0x08,0x36,0x41,0x00},
+ {0x00,0x00,0x7F,0x00,0x00},{0x00,0x41,0x36,0x08,0x00},{0x02,0x01,0x02,0x04,0x02}
+};
+
+// ---------- LCD driver ----------
+static void lcd_cmd(uint8_t cmd) {
+    gpio_put(LCD_DC, 0);
+    gpio_put(LCD_CS, 0);
+    spi_write_blocking(LCD_SPI, &cmd, 1);
+    gpio_put(LCD_CS, 1);
+}
+
+static void lcd_data(const uint8_t *data, size_t len) {
+    gpio_put(LCD_DC, 1);
+    gpio_put(LCD_CS, 0);
+    spi_write_blocking(LCD_SPI, data, len);
+    gpio_put(LCD_CS, 1);
+}
+
+static void lcd_cmd_arg(uint8_t cmd, uint8_t arg) {
+    lcd_cmd(cmd);
+    lcd_data(&arg, 1);
+}
+
+// Choose the rectangle that the next pixels will fill
+static void lcd_window(int x0, int y0, int x1, int y1) {
+    uint8_t col[4] = { x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF };
+    uint8_t row[4] = { y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF };
+    lcd_cmd(0x2A); lcd_data(col, 4);
+    lcd_cmd(0x2B); lcd_data(row, 4);
+    lcd_cmd(0x2C);                       // start writing pixels
+}
+
+static void lcd_fill(int x, int y, int w, int h, uint16_t color) {
+    uint8_t row[LCD_W * 2];
+    for (int i = 0; i < w; i++) {
+        row[2 * i]     = color >> 8;
+        row[2 * i + 1] = color & 0xFF;
+    }
+    lcd_window(x, y, x + w - 1, y + h - 1);
+    for (int j = 0; j < h; j++) lcd_data(row, w * 2);
+}
+
+static void lcd_init(void) {
+    spi_init(LCD_SPI, 10 * 1000 * 1000);
+    gpio_set_function(LCD_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(LCD_MOSI, GPIO_FUNC_SPI);
+    gpio_init(LCD_CS);  gpio_set_dir(LCD_CS, GPIO_OUT);  gpio_put(LCD_CS, 1);
+    gpio_init(LCD_DC);  gpio_set_dir(LCD_DC, GPIO_OUT);
+    gpio_init(LCD_RES); gpio_set_dir(LCD_RES, GPIO_OUT);
+
+    gpio_put(LCD_RES, 0); sleep_ms(50);   // hardware reset
+    gpio_put(LCD_RES, 1); sleep_ms(120);
+
+    lcd_cmd(0x01); sleep_ms(150);         // software reset
+    lcd_cmd(0x11); sleep_ms(120);         // wake up
+    lcd_cmd_arg(0x3A, 0x55);              // 16-bit colour
+    lcd_cmd_arg(0x36, 0x00);              // portrait orientation
+#if LCD_INVERT
+    lcd_cmd(0x21);                        // colour inversion on
+#endif
+    lcd_cmd(0x13);                        // normal mode
+    lcd_cmd(0x29); sleep_ms(20);          // display on
+    lcd_fill(0, 0, LCD_W, LCD_H, BLACK);
+}
+
+// One character, 12 x 16 pixels (5x7 font drawn at 2x size)
+static void lcd_char(int x, int y, char c, uint16_t fg, uint16_t bg) {
+    if (c < 32 || c > 126) c = '?';
+    const uint8_t *glyph = font5x7[c - 32];
+    uint8_t buf[12 * 16 * 2];
+    int n = 0;
+    for (int py = 0; py < 16; py++) {
+        for (int px = 0; px < 12; px++) {
+            int col = px / 2, row = py / 2;
+            bool on = (col < 5) && (row < 7) && ((glyph[col] >> row) & 1);
+            uint16_t color = on ? fg : bg;
+            buf[n++] = color >> 8;
+            buf[n++] = color & 0xFF;
+        }
+    }
+    lcd_window(x, y, x + 11, y + 15);
+    lcd_data(buf, sizeof buf);
+}
+
+static void lcd_text(int x, int y, const char *s, uint16_t fg, uint16_t bg) {
+    for (; *s && x + 12 <= LCD_W; s++, x += 12) lcd_char(x, y, *s, fg, bg);
+}
+
+// ---------- ESP32 link helpers ----------
 // Read one line from the ESP32. Returns false if nothing arrives in time.
 static bool read_line(char *buf, int size, uint32_t timeout_ms) {
     int n = 0;
@@ -24,33 +157,80 @@ static bool read_line(char *buf, int size, uint32_t timeout_ms) {
     return false;
 }
 
+// Throw away leftover bytes (e.g. the junk character at start-up)
+static void drain_uart(void) {
+    while (uart_is_readable(ESP_UART)) uart_getc(ESP_UART);
+}
+
 int main() {
     stdio_init_all();
     uart_init(ESP_UART, BAUD);
     gpio_set_function(ESP_TX, GPIO_FUNC_UART);
     gpio_set_function(ESP_RX, GPIO_FUNC_UART);
+    lcd_init();
 
-    while (!stdio_usb_connected()) sleep_ms(100);   // wait for PuTTY to open
-    printf("Pico ready\n");
+    // Optional: give PuTTY up to 3 s to connect (the LCD works without it)
+    for (int i = 0; i < 30 && !stdio_usb_connected(); i++) sleep_ms(100);
+
+    lcd_text(0, 0, "Nearby Wi-Fi", YELLOW, BLACK);
+    lcd_text(0, 24, "Scanning...", WHITE, BLACK);
+
+    sleep_ms(200);
+    uart_puts(ESP_UART, "\n");          // flush any junk the ESP32 received
+    sleep_ms(300);
+    drain_uart();
+    absolute_time_t t0 = get_absolute_time();
+    uart_puts(ESP_UART, "SCAN\n");
 
     char line[128];
+    char aps[10][64];
+    int count = 0;
+    bool ok = false;
 
-    // Test 1: PING -> PONG
-    uart_puts(ESP_UART, "PING\n");
-    if (read_line(line, sizeof line, 2000)) printf("PING reply: %s\n", line);
-    else                                    printf("PING: no reply\n");
-
-    // Test 2: SCAN every 10 seconds
-    while (true) {
-        printf("\nSending SCAN...\n");
-        absolute_time_t t0 = get_absolute_time();
-        uart_puts(ESP_UART, "SCAN\n");
-
-        while (read_line(line, sizeof line, 8000)) {
-            printf("%s\n", line);
-            if (strncmp(line, "END", 3) == 0 || strncmp(line, "ERR", 3) == 0) break;
+    // 1) Receive everything first (drawing is slow and would lose bytes)
+    while (read_line(line, sizeof line, 8000)) {
+        printf("%s\n", line);
+        if (strncmp(line, "AP,", 3) == 0) {
+            if (count < 10) {
+                strncpy(aps[count], line + 3, 63);
+                aps[count][63] = 0;
+                count++;
+            }
+        } else if (strncmp(line, "END", 3) == 0) {
+            ok = true;
+            break;
+        } else if (strncmp(line, "ERR", 3) == 0) {
+            break;
         }
-        printf("[round trip %lld ms]\n", absolute_time_diff_us(t0, get_absolute_time()) / 1000);
-        sleep_ms(10000);
     }
+    int ms = (int)(absolute_time_diff_us(t0, get_absolute_time()) / 1000);
+
+    // 2) Now draw the list on the LCD
+    for (int i = 0; i < count; i++) {
+        // stored as: <ssid>,<rssi>,<channel>
+        char *ssid = aps[i];
+        char *c1 = strchr(ssid, ',');
+        if (!c1) continue;
+        *c1 = 0;
+        char *rssi = c1 + 1;
+        char *c2 = strchr(rssi, ',');
+        if (!c2) continue;
+        *c2 = 0;
+        char *chan = c2 + 1;
+
+        char text[40];
+        snprintf(text, sizeof text, "%-12.12s %4s %2s", ssid, rssi, chan);
+        lcd_text(0, 24 + i * 18, text, WHITE, BLACK);
+    }
+
+    char foot[40];
+    if (ok) {
+        snprintf(foot, sizeof foot, "%d found, %d ms", count, ms);
+        lcd_text(0, 24 + 10 * 18 + 6, foot, GREEN, BLACK);
+    } else {
+        lcd_text(0, 24 + 10 * 18 + 6, "Scan failed", RED, BLACK);
+    }
+    printf("[round trip %d ms]\n", ms);
+
+    while (true) sleep_ms(1000);          // stop here (scan once)
 }
