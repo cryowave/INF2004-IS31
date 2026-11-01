@@ -15,5 +15,7 @@
 ER st7789_init(void);
 void st7789_fill(UH color);
 void st7789_fill_rect(UH x, UH y, UH width, UH height, UH color);
+void st7789_draw_char(UH x, UH y, char c, UH color, UH background, UB scale);
+void st7789_draw_text(UH x, UH y, const char *text, UH color, UH background, UB scale);
 
 #endif

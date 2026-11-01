@@ -1,7 +1,5 @@
 # Display Module
 
-Owner: Lay How
-
 Basic ST7789 LCD driver for the Pico.
 
 Current files:
@@ -15,9 +13,12 @@ LCD pins:
 - GP7: DC
 - GP6: RESET
 
-For now the driver can:
+Current support:
 - initialise the LCD
 - fill the full screen with one colour
 - fill a rectangle with one colour
+- draw 5x7 characters
+- draw basic text strings
 
-Text and menu drawing will be added after this.
+The text renderer currently supports uppercase letters and numbers.
+Menu drawing will be added after this.
