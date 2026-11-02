@@ -1,7 +1,14 @@
 # User Input Module
 
-Owner: Lay How
+Handles local controls connected to the Pico.
 
-Rotary encoder and button handling for the Pico.
+Current support:
+- rotary encoder A on GP4
+- rotary encoder B on GP5
+- uT-Kernel User Input Task
+- basic rotary direction detection
 
-Keep hardware input handling separate from display rendering and feature logic.
+The task currently prints `next` or `previous` to the serial console when the
+encoder is turned.
+
+The select and back buttons will be added separately.

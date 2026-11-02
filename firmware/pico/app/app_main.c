@@ -2,6 +2,7 @@
 #include <tm/tmonitor.h>
 
 #include "display_manager.h"
+#include "user_input.h"
 
 EXPORT INT usermain(void)
 {
@@ -11,6 +12,13 @@ EXPORT INT usermain(void)
 
     if (er < E_OK) {
         tm_printf((UB *)"[app] display init failed: %d\n", er);
+        return 1;
+    }
+
+    er = user_input_init();
+
+    if (er < E_OK) {
+        tm_printf((UB *)"[app] input init failed: %d\n", er);
         return 1;
     }
 
