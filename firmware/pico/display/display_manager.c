@@ -13,7 +13,6 @@
 
 static ID display_mbf_id;
 
-/* space used by the uT-Kernel message buffer */
 static UW display_mbf_buffer[
     ((DISPLAY_QUEUE_COUNT * sizeof(DisplayMessage)) / sizeof(UW))
     + (DISPLAY_QUEUE_COUNT * 4U)
@@ -40,6 +39,47 @@ static void show_boot_screen(void)
     );
 }
 
+static void draw_menu_marker(UH y)
+{
+    st7789_fill_rect(18U, y + 2U, 4U, 4U, ST7789_WHITE);
+    st7789_fill_rect(22U, y + 6U, 4U, 4U, ST7789_WHITE);
+    st7789_fill_rect(18U, y + 10U, 4U, 4U, ST7789_WHITE);
+}
+
+static void draw_menu_item(UH y, const char *text, BOOL selected)
+{
+    if (selected) {
+        draw_menu_marker(y);
+    }
+
+    st7789_draw_text(
+        42U,
+        y,
+        text,
+        ST7789_WHITE,
+        ST7789_BLACK,
+        2U
+    );
+}
+
+static void show_menu(MenuItem selected)
+{
+    st7789_fill(ST7789_BLACK);
+
+    st7789_draw_text(
+        75U,
+        35U,
+        "OTTIE",
+        ST7789_WHITE,
+        ST7789_BLACK,
+        3U
+    );
+
+    draw_menu_item(105U, "WIFI SCAN", selected == MENU_ITEM_WIFI_SCAN);
+    draw_menu_item(145U, "PEER STATUS", selected == MENU_ITEM_PEER_STATUS);
+    draw_menu_item(185U, "SYSTEM INFO", selected == MENU_ITEM_SYSTEM_INFO);
+}
+
 static void display_task(INT stacd, void *exinf)
 {
     DisplayMessage message;
@@ -49,7 +89,6 @@ static void display_task(INT stacd, void *exinf)
     (void)stacd;
     (void)exinf;
 
-    /* only this task starts and writes to the LCD */
     er = st7789_init();
 
     if (er < E_OK) {
@@ -58,7 +97,6 @@ static void display_task(INT stacd, void *exinf)
     }
 
     while (1) {
-        /* wait here until another part of the program sends a display message */
         size = tk_rcv_mbf(display_mbf_id, &message, TMO_FEVR);
 
         if (size != (INT)sizeof(DisplayMessage)) {
@@ -67,6 +105,8 @@ static void display_task(INT stacd, void *exinf)
 
         if (message.event == DISPLAY_EVENT_BOOT) {
             show_boot_screen();
+        } else if (message.event == DISPLAY_EVENT_SHOW_MENU) {
+            show_menu(message.menu_item);
         }
     }
 }
@@ -107,6 +147,22 @@ ER display_send(DisplayEvent event)
     DisplayMessage message;
 
     message.event = event;
+    message.menu_item = MENU_ITEM_WIFI_SCAN;
+
+    return tk_snd_mbf(
+        display_mbf_id,
+        &message,
+        (INT)sizeof(DisplayMessage),
+        100
+    );
+}
+
+ER display_show_menu(MenuItem selected)
+{
+    DisplayMessage message;
+
+    message.event = DISPLAY_EVENT_SHOW_MENU;
+    message.menu_item = selected;
 
     return tk_snd_mbf(
         display_mbf_id,

@@ -21,9 +21,17 @@ EXPORT INT usermain(void)
         return 1;
     }
 
-    tm_printf((UB *)"[app] Ottie started\n");
+    tk_dly_tsk(1000);
 
-    /* usermain must stay alive or the kernel will shut down */
+    er = display_show_menu(MENU_ITEM_WIFI_SCAN);
+
+    if (er < E_OK) {
+        tm_printf((UB *)"[app] menu display failed: %d\n", er);
+        return 1;
+    }
+
+    tm_printf((UB *)"[app] Ottie menu started\n");
+
     tk_slp_tsk(TMO_FEVR);
 
     return 0;

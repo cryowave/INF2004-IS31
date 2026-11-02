@@ -23,5 +23,6 @@ Current support:
 - draw basic text strings
 - run the LCD through a dedicated uT-Kernel Display Task
 - receive display events through a uT-Kernel message buffer
+- show the basic Ottie menu
 
 Only the Display Task should directly control the LCD.
