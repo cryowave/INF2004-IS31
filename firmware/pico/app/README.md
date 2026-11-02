@@ -2,5 +2,9 @@
 
 Main Pico-side application entry point and system integration.
 
-This folder will eventually contain the code that starts µT-Kernel 3 SMP,
-creates the application tasks, and connects the team's Pico-side modules together.
+Current implementation:
+- starts the Display Manager
+- starts the Display Task
+- sends the first display event after startup
+
+More application tasks will be connected here as the project is integrated.

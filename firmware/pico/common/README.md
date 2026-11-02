@@ -2,10 +2,7 @@
 
 Shared data structures and interfaces used by multiple Pico modules.
 
-Examples:
-- message types
-- display event structures
-- feature request / response structures
-- common error codes
+Current shared files:
+- `display_message.h` - display events sent to the Display Task
 
 Keep this folder small and avoid putting hardware-specific code here.

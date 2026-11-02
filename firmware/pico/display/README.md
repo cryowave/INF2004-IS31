@@ -1,10 +1,12 @@
 # Display Module
 
-Basic ST7789 LCD driver for the Pico.
+Reusable ST7789 display module for the Pico.
 
 Current files:
 - `st7789.c`
 - `st7789.h`
+- `display_manager.c`
+- `display_manager.h`
 
 LCD pins:
 - GP2: SCK
@@ -19,6 +21,7 @@ Current support:
 - fill a rectangle with one colour
 - draw 5x7 characters
 - draw basic text strings
+- run the LCD through a dedicated uT-Kernel Display Task
+- receive display events through a uT-Kernel message buffer
 
-The text renderer currently supports uppercase letters and numbers.
-Menu drawing will be added after this.
+Only the Display Task should directly control the LCD.
