@@ -23,6 +23,10 @@ Current support:
 - draw basic text strings
 - run the LCD through a dedicated uT-Kernel Display Task
 - receive display events through a uT-Kernel message buffer
-- show the basic Ottie menu
+- show the main Ottie menu
+- show Wi-Fi Scan, Peer Status and System Info screens
+
+The Wi-Fi and peer screens still use placeholder status text until the other
+modules are integrated.
 
 Only the Display Task should directly control the LCD.

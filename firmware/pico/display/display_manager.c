@@ -80,6 +80,44 @@ static void show_menu(MenuItem selected)
     draw_menu_item(185U, "SYSTEM INFO", selected == MENU_ITEM_SYSTEM_INFO);
 }
 
+static void show_status_screen(const char *title, const char *status)
+{
+    st7789_fill(ST7789_BLACK);
+
+    st7789_draw_text(
+        18U,
+        95U,
+        title,
+        ST7789_WHITE,
+        ST7789_BLACK,
+        2U
+    );
+
+    st7789_draw_text(
+        18U,
+        150U,
+        status,
+        ST7789_WHITE,
+        ST7789_BLACK,
+        2U
+    );
+}
+
+static void show_wifi_screen(void)
+{
+    show_status_screen("WIFI SCAN", "NOT READY");
+}
+
+static void show_peer_screen(void)
+{
+    show_status_screen("PEER STATUS", "NOT READY");
+}
+
+static void show_system_screen(void)
+{
+    show_status_screen("SYSTEM INFO", "SMP READY");
+}
+
 static void display_task(INT stacd, void *exinf)
 {
     DisplayMessage message;
@@ -103,10 +141,29 @@ static void display_task(INT stacd, void *exinf)
             continue;
         }
 
-        if (message.event == DISPLAY_EVENT_BOOT) {
-            show_boot_screen();
-        } else if (message.event == DISPLAY_EVENT_SHOW_MENU) {
-            show_menu(message.menu_item);
+        switch (message.event) {
+            case DISPLAY_EVENT_BOOT:
+                show_boot_screen();
+                break;
+
+            case DISPLAY_EVENT_SHOW_MENU:
+                show_menu(message.menu_item);
+                break;
+
+            case DISPLAY_EVENT_WIFI_SCREEN:
+                show_wifi_screen();
+                break;
+
+            case DISPLAY_EVENT_PEER_SCREEN:
+                show_peer_screen();
+                break;
+
+            case DISPLAY_EVENT_SYSTEM_SCREEN:
+                show_system_screen();
+                break;
+
+            default:
+                break;
         }
     }
 }

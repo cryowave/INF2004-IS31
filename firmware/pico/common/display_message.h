@@ -10,7 +10,10 @@ typedef enum {
 
 typedef enum {
     DISPLAY_EVENT_BOOT = 0,
-    DISPLAY_EVENT_SHOW_MENU
+    DISPLAY_EVENT_SHOW_MENU,
+    DISPLAY_EVENT_WIFI_SCREEN,
+    DISPLAY_EVENT_PEER_SCREEN,
+    DISPLAY_EVENT_SYSTEM_SCREEN
 } DisplayEvent;
 
 typedef struct {
