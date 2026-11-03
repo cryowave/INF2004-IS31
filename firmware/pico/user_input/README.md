@@ -14,6 +14,7 @@ Current support:
 - encoder push/select detection
 - back button detection
 - basic button debouncing
+- sends input events to the Menu Controller
 
 Serial output:
 - `[input] next`
@@ -21,5 +22,5 @@ Serial output:
 - `[input] select`
 - `[input] back`
 
-The inputs are detected here first. Menu actions will be connected in the next
-stage.
+The User Input Task only detects the controls. It does not draw on the LCD.
+Menu behaviour is handled by the Menu Controller.

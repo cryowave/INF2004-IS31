@@ -9,6 +9,7 @@
 #endif
 
 #include "user_input.h"
+#include "menu_controller.h"
 
 #define ENCODER_PIN_A          4U
 #define ENCODER_PIN_B          5U
@@ -79,6 +80,15 @@ static BOOL button_pressed(ButtonState *button, UINT pin)
     return FALSE;
 }
 
+static void send_input(InputEvent event)
+{
+    ER er = menu_controller_send(event);
+
+    if (er < E_OK) {
+        tm_printf((UB *)"[input] event send failed: %d\n", er);
+    }
+}
+
 static void input_task(INT stacd, void *exinf)
 {
     UINT previous_state;
@@ -118,19 +128,23 @@ static void input_task(INT stacd, void *exinf)
 
             if (encoder_count >= 4) {
                 tm_printf((UB *)"[input] next\n");
+                send_input(INPUT_EVENT_NEXT);
                 encoder_count = 0;
             } else if (encoder_count <= -4) {
                 tm_printf((UB *)"[input] previous\n");
+                send_input(INPUT_EVENT_PREVIOUS);
                 encoder_count = 0;
             }
         }
 
         if (button_pressed(&select_button, ENCODER_BUTTON_PIN)) {
             tm_printf((UB *)"[input] select\n");
+            send_input(INPUT_EVENT_SELECT);
         }
 
         if (button_pressed(&back_button, BACK_BUTTON_PIN)) {
             tm_printf((UB *)"[input] back\n");
+            send_input(INPUT_EVENT_BACK);
         }
 
         tk_dly_tsk(INPUT_POLL_MS);
