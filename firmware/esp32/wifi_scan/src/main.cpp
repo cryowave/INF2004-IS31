@@ -1,69 +1,114 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
-const int UART_RX = 0;    // receives from Pico GP8
-const int UART_TX = 1;    // sends to Pico GP9
-const int LED_PIN = 8;    // onboard LED (on when LOW)
+const int UART_RX = 0;   // from Pico
+const int UART_TX = 1;   // to Pico
+const int LED_PIN = 8;
 const int MAX_APS = 10;
 
-String lineUsb;           // line typed in the serial monitor
-String linePico;          // line received from the Pico
-unsigned long lastBeat = 0;
+// ---- NFR13: only report networks we are authorised to monitor ----
+const bool FILTER_ENABLED = true;          // false = report everything (debugging only)
+const char *ALLOWED_SSIDS[] = {
+  "air justins"                    // <-- change these to your real network name
+};
+const int N_ALLOWED = sizeof(ALLOWED_SSIDS) / sizeof(ALLOWED_SSIDS[0]);
 
-// Run a scan and send the result to "out" (Serial1 = Pico, Serial = USB)
-void doScan(Stream &out) {
-  unsigned long t0 = millis();
-  int n = WiFi.scanNetworks(false, false, true, 250);   // passive scan, listens 150 ms per channel
-  unsigned long took = millis() - t0;
+bool isAuthorised(const String &ssid) {
+  if (!FILTER_ENABLED) return true;
+  for (int i = 0; i < N_ALLOWED; i++) {
+    if (ssid == ALLOWED_SSIDS[i]) return true;
+  }
+  return false;
+}
 
-  if (n < 0) {
-    out.println("ERR,SCAN_FAILED");
+bool scanning = false;           // is a scan running right now?
+unsigned long scanStartMs = 0;
+Stream *scanReplyTo = nullptr;   // who asked for the scan (Pico or USB)
+
+String usbBuf, picoBuf;
+
+void sendResults(Stream &out, int n) {
+  int sent = 0;
+  for (int i = 0; i < n && sent < MAX_APS; i++) {
+    String ssid = WiFi.SSID(i);
+    if (!isAuthorised(ssid)) continue;     // skip networks we may not report
+    ssid.replace(',', ' ');
+    out.print("AP,");
+    out.print(ssid);
+    out.print(",");
+    out.print(WiFi.RSSI(i));
+    out.print(",");
+    out.println(WiFi.channel(i));
+    sent++;
+  }
+  out.print("END,");
+  out.println(sent);
+}
+
+// Start a scan in the background (does NOT freeze the ESP32)
+void startScan(Stream &out) {
+  if (scanning) {
+    out.println("ERR,BUSY");
     return;
   }
-  int count = (n < MAX_APS) ? n : MAX_APS;   // results are strongest first
-  for (int i = 0; i < count; i++) {
-    String ssid = WiFi.SSID(i);
-    ssid.replace(",", " ");                  // commas would break the format
-    out.println("AP," + ssid + "," + String(WiFi.RSSI(i)) + "," + String(WiFi.channel(i)));
+  WiFi.scanNetworks(true, false, true, 250);  // async, passive, 250 ms/channel
+  scanning = true;
+  scanStartMs = millis();
+  scanReplyTo = &out;
+}
+
+// Called every loop: has the background scan finished?
+void checkScan() {
+  if (!scanning) return;
+  int n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_RUNNING) return;       // still scanning
+  scanning = false;
+  unsigned long took = millis() - scanStartMs;
+  if (n < 0) {
+    scanReplyTo->println("ERR,SCAN_FAILED");
+  } else {
+    sendResults(*scanReplyTo, n);
   }
-  out.println("END," + String(count));
+  Serial.printf("[scan took %lu ms, heard %d, filter %s]\n",
+                took, n, FILTER_ENABLED ? "ON" : "OFF");
   WiFi.scanDelete();
-
-  Serial.println("[scan took " + String(took) + " ms, found " + String(n) + "]");
 }
 
-void handleCommand(String cmd, Stream &reply) {
+void handleCommand(String cmd, Stream &out) {
   cmd.trim();
-  if (cmd.length() == 0) return;
-  Serial.println("Command: " + cmd);
-  if (cmd == "PING")      reply.println("PONG");
-  else if (cmd == "SCAN") doScan(reply);
-  else                    reply.println("ERR,UNKNOWN");
+  if (cmd.length() == 0) return;            // ignore empty lines
+  if (cmd == "PING")      out.println("PONG");
+  else if (cmd == "SCAN") startScan(out);
+  else                    out.println("ERR,UNKNOWN");
 }
 
-// Collect characters until newline, then run the command
-void readLines(Stream &in, String &buf, Stream &reply) {
+void readLines(Stream &in, String &buf) {
   while (in.available()) {
     char c = in.read();
-    if (c == '\n') { handleCommand(buf, reply); buf = ""; }
-    else           { buf += c; }
+    if (c == '\n') { handleCommand(buf, in); buf = ""; }
+    else if (c != '\r') buf += c;
   }
 }
 
 void setup() {
+  pinMode(LED_PIN, OUTPUT);
   Serial.begin(115200);
   Serial1.begin(115200, SERIAL_8N1, UART_RX, UART_TX);
-  pinMode(LED_PIN, OUTPUT);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  delay(100);
+  Serial1.println("READY");                 // tell the Pico we just started
   Serial.println("ESP32 ready. Type PING or SCAN.");
 }
 
 void loop() {
-  if (millis() - lastBeat >= 1000) {
-    lastBeat = millis();
+  readLines(Serial, usbBuf);
+  readLines(Serial1, picoBuf);
+  checkScan();
+
+  static unsigned long lastBlink = 0;
+  if (millis() - lastBlink >= 1000) {
+    lastBlink = millis();
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));
   }
-  readLines(Serial,  lineUsb,  Serial);    // typed in the monitor, reply to the monitor
-  readLines(Serial1, linePico, Serial1);   // from the Pico, reply to the Pico
 }
