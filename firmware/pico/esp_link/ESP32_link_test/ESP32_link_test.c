@@ -203,6 +203,62 @@ static bool button_pressed(Button *b) {
     return false;
 }
 
+// ---------- ESP32 link-alive check (shown on the LCD) ----------
+#define PING_INTERVAL_MS 500    // ask "are you alive?" this often
+#define LOST_AFTER_MS    1500   // no PONG for this long = link lost (must be under 2000)
+
+typedef enum { LINK_UNKNOWN, LINK_OK, LINK_LOST } LinkState;
+static LinkState link_state = LINK_UNKNOWN;
+static uint32_t  last_pong_ms = 0;
+static uint32_t  last_ping_ms = 0;
+static char      mon_line[64];
+static int       mon_len = 0;
+
+static uint32_t now_ms(void) { return to_ms_since_boot(get_absolute_time()); }
+
+// Small status badge in the top-right corner of every screen
+static void draw_link_badge(void) {
+    if (link_state == LINK_OK)        lcd_text(144, 4, "ESP OK  ", GREEN,  BLACK);
+    else if (link_state == LINK_LOST) lcd_text(144, 4, "ESP LOST", RED,    BLACK);
+    else                              lcd_text(144, 4, "ESP ... ", YELLOW, BLACK);
+}
+
+static void set_link_state(LinkState s) {
+    if (s == link_state) return;
+    link_state = s;
+    printf("[link] %s at %lu ms\n", s == LINK_OK ? "OK" : "LOST", (unsigned long)now_ms());
+    draw_link_badge();
+}
+
+// Call this every trip round the main loop. It never blocks.
+static void link_monitor_poll(void) {
+    uint32_t now = now_ms();
+
+    while (uart_is_readable(ESP_UART)) {          // only PONG matters here
+        char c = uart_getc(ESP_UART);
+        if (c == '\r') continue;
+        if (c == '\n') {
+            mon_line[mon_len] = 0;
+            if (strcmp(mon_line, "PONG") == 0) {
+                last_pong_ms = now;
+                set_link_state(LINK_OK);
+            }
+            mon_len = 0;
+        } else if (mon_len < (int)sizeof mon_line - 1) {
+            mon_line[mon_len++] = c;
+        }
+    }
+
+    if (now - last_ping_ms >= PING_INTERVAL_MS) {
+        last_ping_ms = now;
+        uart_puts(ESP_UART, "PING\n");
+    }
+
+    if (link_state != LINK_LOST && (now - last_pong_ms) >= LOST_AFTER_MS) {
+        set_link_state(LINK_LOST);
+    }
+}
+
 // ---------- Screens ----------
 static const char *menu_items[3] = { "WIFI SCAN", "PEER STATUS", "SYSTEM INFO" };
 
@@ -214,12 +270,35 @@ static void draw_menu(int selected) {
         lcd_text(18, y, i == selected ? ">" : " ", WHITE, BLACK);
         lcd_text(42, y, menu_items[i], WHITE, BLACK);
     }
+    draw_link_badge();
 }
 
 static void draw_status(const char *title, const char *status) {
     lcd_fill(0, 0, LCD_W, LCD_H, BLACK);
     lcd_text(18, 95, title, WHITE, BLACK);
     lcd_text(18, 150, status, WHITE, BLACK);
+    draw_link_badge();
+}
+
+// Draw a red error screen (message + hint) for a failed scan
+static void show_scan_error(const char *msg, const char *hint) {
+    lcd_fill(0, 0, LCD_W, LCD_H, BLACK);
+    lcd_text(0, 4, "WIFI SCAN", WHITE, BLACK);
+    lcd_text(0, 120, msg, RED, BLACK);
+    lcd_text(0, 150, hint, WHITE, BLACK);
+    lcd_text(0, 292, "KO = menu", YELLOW, BLACK);
+    draw_link_badge();
+}
+
+// Quick "are you there?" before a scan. True if the ESP32 answers PONG within 1 s.
+static bool esp_alive_check(void) {
+    char line[64];
+    uart_puts(ESP_UART, "PING\n");
+    absolute_time_t end = make_timeout_time_ms(1000);
+    while (!time_reached(end)) {
+        if (read_line(line, sizeof line, 100) && strcmp(line, "PONG") == 0) return true;
+    }
+    return false;
 }
 
 // Ask the ESP32 for a Wi-Fi scan and show the result on the LCD
@@ -229,6 +308,14 @@ static void do_wifi_scan(void) {
     uart_puts(ESP_UART, "\n");          // flush any junk the ESP32 received
     sleep_ms(300);
     drain_uart();
+
+    if (!esp_alive_check()) {           // is the ESP32 even there?
+        set_link_state(LINK_LOST);
+        show_scan_error("ESP32 NOT RESPONDING", "CHECK WIRES + POWER");
+        printf("[esp] scan cancelled: no PONG\n");
+        return;
+    }
+
     absolute_time_t t0 = get_absolute_time();
     uart_puts(ESP_UART, "SCAN\n");
 
@@ -236,6 +323,7 @@ static void do_wifi_scan(void) {
     char aps[10][64];
     int count = 0;
     bool ok = false;
+    const char *err = NULL;
 
     // receive everything first (drawing is slow and would lose bytes)
     while (read_line(line, sizeof line, 8000)) {
@@ -250,10 +338,25 @@ static void do_wifi_scan(void) {
             ok = true;
             break;
         } else if (strncmp(line, "ERR", 3) == 0) {
+            if (strstr(line, "BUSY"))             err = "ESP32 IS BUSY";
+            else if (strstr(line, "SCAN_FAILED")) err = "SCAN FAILED";
+            else                                  err = "ESP32 ERROR";
             break;
         }
     }
-    int ms = (int)(absolute_time_diff_us(t0, get_absolute_time()) / 1000);
+    absolute_time_t t_data = get_absolute_time();     // results have arrived
+    int ms = (int)(absolute_time_diff_us(t0, t_data) / 1000);
+
+    if (!ok) {
+        if (!err) err = (count > 0) ? "SCAN INCOMPLETE" : "NO REPLY TO SCAN";
+        show_scan_error(err, "PRESS KO, TRY AGAIN");
+        printf("[esp] scan failed: %s\n", err);
+        return;
+    }
+
+    set_link_state(LINK_OK);            // a full scan proves the link is fine
+    last_pong_ms = last_ping_ms = now_ms();
+    mon_len = 0;
 
     lcd_fill(0, 0, LCD_W, LCD_H, BLACK);
     lcd_text(0, 4, "WIFI SCAN", WHITE, BLACK);
@@ -276,14 +379,19 @@ static void do_wifi_scan(void) {
     }
 
     char foot[40];
-    if (ok) {
-        snprintf(foot, sizeof foot, "%d found, %d ms", count, ms);
-        lcd_text(0, 260, foot, GREEN, BLACK);
-    } else {
-        lcd_text(0, 260, "Scan failed", RED, BLACK);
-    }
+    snprintf(foot, sizeof foot, "%d found, %d ms", count, ms);
+    lcd_text(0, 260, foot, GREEN, BLACK);
     lcd_text(0, 292, "KO = menu", YELLOW, BLACK);
+    draw_link_badge();
+
+    // how long did the screen take to update after the results arrived?
+    int draw_ms = (int)(absolute_time_diff_us(t_data, get_absolute_time()) / 1000);
+    char dtxt[40];
+    snprintf(dtxt, sizeof dtxt, "LCD update %d ms", draw_ms);
+    lcd_text(0, 276, dtxt, draw_ms <= 500 ? GREEN : RED, BLACK);
+
     printf("[esp] scan finished, ok=%d, networks=%d, %d ms\n", ok, count, ms);
+    printf("[lcd] screen updated %d ms after results arrived (limit 500)\n", draw_ms);
 }
 
 static int encoder_state(void) {
@@ -306,6 +414,7 @@ int main() {
     // Optional: give PuTTY up to 3 s to connect (the menu works without it)
     for (int i = 0; i < 30 && !stdio_usb_connected(); i++) sleep_ms(100);
     printf("Ottie menu demo started\n");
+    last_pong_ms = last_ping_ms = now_ms();   // start the link-alive clock
 
     // +1 / -1 for each valid knob step, 0 for no change or a bounce
     static const int8_t table[16] = { 0,-1, 1, 0,  1, 0, 0,-1, -1, 0, 0, 1,  0, 1,-1, 0 };
@@ -357,6 +466,8 @@ int main() {
                 draw_menu(selected);
             }
         }
+
+        link_monitor_poll();                    // ping the ESP32, update ESP OK / LOST
 
         sleep_ms(2);
     }
