@@ -13,7 +13,7 @@ unsigned long lastBeat = 0;
 // Run a scan and send the result to "out" (Serial1 = Pico, Serial = USB)
 void doScan(Stream &out) {
   unsigned long t0 = millis();
-  int n = WiFi.scanNetworks();          // blocks until finished
+  int n = WiFi.scanNetworks(false, false, true, 250);   // passive scan, listens 150 ms per channel
   unsigned long took = millis() - t0;
 
   if (n < 0) {

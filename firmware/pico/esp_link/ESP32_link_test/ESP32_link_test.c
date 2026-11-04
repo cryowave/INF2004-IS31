@@ -29,6 +29,13 @@
 #define GREEN  0x07E0
 #define RED    0xF800
 
+// ---------- Knob and buttons ----------
+#define ENC_A      4
+#define ENC_B      5
+#define BTN_SELECT 17        // KO button = select (and back, from any other screen)
+#define BTN_BACK   16        // knob press (not used, the knob does not press down)
+#define ENC_STEPS_PER_CLICK 2   // set to 4 if one click moves the menu by two items
+
 // ---------- 5x7 font, ASCII 32..126 ----------
 static const uint8_t font5x7[95][5] = {
  {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},{0x14,0x7F,0x14,0x7F,0x14},
@@ -162,20 +169,63 @@ static void drain_uart(void) {
     while (uart_is_readable(ESP_UART)) uart_getc(ESP_UART);
 }
 
-int main() {
-    stdio_init_all();
-    uart_init(ESP_UART, BAUD);
-    gpio_set_function(ESP_TX, GPIO_FUNC_UART);
-    gpio_set_function(ESP_RX, GPIO_FUNC_UART);
-    lcd_init();
+// ---------- Buttons ----------
+typedef struct {
+    unsigned pin;
+    bool stable;
+    bool last;
+    int count;
+} Button;
 
-    // Optional: give PuTTY up to 3 s to connect (the LCD works without it)
-    for (int i = 0; i < 30 && !stdio_usb_connected(); i++) sleep_ms(100);
+static void button_init(Button *b, unsigned pin) {
+    gpio_init(pin);
+    gpio_set_dir(pin, GPIO_IN);
+    gpio_pull_up(pin);
+    b->pin = pin;
+    b->stable = b->last = gpio_get(pin);
+    b->count = 0;
+}
 
-    lcd_text(0, 0, "Nearby Wi-Fi", YELLOW, BLACK);
-    lcd_text(0, 24, "Scanning...", WHITE, BLACK);
+// Returns true once each time the button is pressed (debounced)
+static bool button_pressed(Button *b) {
+    bool v = gpio_get(b->pin);
+    if (v == b->last) {
+        if (b->count < 5) b->count++;
+    } else {
+        b->last = v;
+        b->count = 0;
+    }
+    if (b->count >= 5 && b->stable != b->last) {
+        b->stable = b->last;
+        b->count = 0;
+        return !b->stable;               // pulled low = pressed
+    }
+    return false;
+}
 
-    sleep_ms(200);
+// ---------- Screens ----------
+static const char *menu_items[3] = { "WIFI SCAN", "PEER STATUS", "SYSTEM INFO" };
+
+static void draw_menu(int selected) {
+    lcd_fill(0, 0, LCD_W, LCD_H, BLACK);
+    lcd_text(84, 30, "OTTIE", YELLOW, BLACK);
+    for (int i = 0; i < 3; i++) {
+        int y = 100 + i * 40;
+        lcd_text(18, y, i == selected ? ">" : " ", WHITE, BLACK);
+        lcd_text(42, y, menu_items[i], WHITE, BLACK);
+    }
+}
+
+static void draw_status(const char *title, const char *status) {
+    lcd_fill(0, 0, LCD_W, LCD_H, BLACK);
+    lcd_text(18, 95, title, WHITE, BLACK);
+    lcd_text(18, 150, status, WHITE, BLACK);
+}
+
+// Ask the ESP32 for a Wi-Fi scan and show the result on the LCD
+static void do_wifi_scan(void) {
+    draw_status("WIFI SCAN", "SCANNING...");
+
     uart_puts(ESP_UART, "\n");          // flush any junk the ESP32 received
     sleep_ms(300);
     drain_uart();
@@ -187,7 +237,7 @@ int main() {
     int count = 0;
     bool ok = false;
 
-    // 1) Receive everything first (drawing is slow and would lose bytes)
+    // receive everything first (drawing is slow and would lose bytes)
     while (read_line(line, sizeof line, 8000)) {
         printf("%s\n", line);
         if (strncmp(line, "AP,", 3) == 0) {
@@ -205,7 +255,9 @@ int main() {
     }
     int ms = (int)(absolute_time_diff_us(t0, get_absolute_time()) / 1000);
 
-    // 2) Now draw the list on the LCD
+    lcd_fill(0, 0, LCD_W, LCD_H, BLACK);
+    lcd_text(0, 4, "WIFI SCAN", WHITE, BLACK);
+
     for (int i = 0; i < count; i++) {
         // stored as: <ssid>,<rssi>,<channel>
         char *ssid = aps[i];
@@ -220,17 +272,92 @@ int main() {
 
         char text[40];
         snprintf(text, sizeof text, "%-12.12s %4s %2s", ssid, rssi, chan);
-        lcd_text(0, 24 + i * 18, text, WHITE, BLACK);
+        lcd_text(0, 30 + i * 22, text, WHITE, BLACK);
     }
 
     char foot[40];
     if (ok) {
         snprintf(foot, sizeof foot, "%d found, %d ms", count, ms);
-        lcd_text(0, 24 + 10 * 18 + 6, foot, GREEN, BLACK);
+        lcd_text(0, 260, foot, GREEN, BLACK);
     } else {
-        lcd_text(0, 24 + 10 * 18 + 6, "Scan failed", RED, BLACK);
+        lcd_text(0, 260, "Scan failed", RED, BLACK);
     }
-    printf("[round trip %d ms]\n", ms);
+    lcd_text(0, 292, "KO = menu", YELLOW, BLACK);
+    printf("[esp] scan finished, ok=%d, networks=%d, %d ms\n", ok, count, ms);
+}
 
-    while (true) sleep_ms(1000);          // stop here (scan once)
+static int encoder_state(void) {
+    return (gpio_get(ENC_A) << 1) | gpio_get(ENC_B);
+}
+
+int main() {
+    stdio_init_all();
+    uart_init(ESP_UART, BAUD);
+    gpio_set_function(ESP_TX, GPIO_FUNC_UART);
+    gpio_set_function(ESP_RX, GPIO_FUNC_UART);
+    lcd_init();
+
+    gpio_init(ENC_A); gpio_set_dir(ENC_A, GPIO_IN); gpio_pull_up(ENC_A);
+    gpio_init(ENC_B); gpio_set_dir(ENC_B, GPIO_IN); gpio_pull_up(ENC_B);
+    Button select_btn, back_btn;
+    button_init(&select_btn, BTN_SELECT);
+    button_init(&back_btn, BTN_BACK);
+
+    // Optional: give PuTTY up to 3 s to connect (the menu works without it)
+    for (int i = 0; i < 30 && !stdio_usb_connected(); i++) sleep_ms(100);
+    printf("Ottie menu demo started\n");
+
+    // +1 / -1 for each valid knob step, 0 for no change or a bounce
+    static const int8_t table[16] = { 0,-1, 1, 0,  1, 0, 0,-1, -1, 0, 0, 1,  0, 1,-1, 0 };
+
+    int selected = 0;
+    bool on_menu = true;
+    int last = encoder_state();
+    int acc = 0;
+    draw_menu(selected);
+
+    while (true) {
+        int now = encoder_state();
+        if (now != last) {
+            acc += table[(last << 2) | now];
+            last = now;
+            if (!on_menu) {
+                acc = 0;
+            } else if (acc >= ENC_STEPS_PER_CLICK) {
+                acc = 0;
+                selected = (selected + 1) % 3;
+                printf("[input] next\n");
+                draw_menu(selected);
+            } else if (acc <= -ENC_STEPS_PER_CLICK) {
+                acc = 0;
+                selected = (selected + 2) % 3;
+                printf("[input] previous\n");
+                draw_menu(selected);
+            }
+        }
+
+        if (button_pressed(&select_btn)) {
+            printf("[input] select\n");
+            if (on_menu) {
+                on_menu = false;
+                if (selected == 0) do_wifi_scan();
+                else               draw_status(menu_items[selected], "NOT READY");
+                last = encoder_state();
+                acc = 0;
+            } else {
+                on_menu = true;                 // press again to go back to the menu
+                draw_menu(selected);
+            }
+        }
+
+        if (button_pressed(&back_btn)) {
+            printf("[input] back\n");
+            if (!on_menu) {
+                on_menu = true;
+                draw_menu(selected);
+            }
+        }
+
+        sleep_ms(2);
+    }
 }
