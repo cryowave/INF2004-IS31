@@ -2,25 +2,28 @@
 
 Handles local controls connected to the Pico.
 
-Current pins:
+Current controls:
 - GP4: rotary encoder A
 - GP5: rotary encoder B
-- GP16: encoder push/select
-- GP17: back button
+- GP17: KO action button
+- GP16: not used for the current physical knob
 
 Current support:
 - uT-Kernel User Input Task
 - rotary direction detection
-- encoder push/select detection
-- back button detection
+- KO button detection
 - basic button debouncing
 - sends input events to the Menu Controller
 
 Serial output:
 - `[input] next`
 - `[input] previous`
-- `[input] select`
-- `[input] back`
+- `[input] ko`
 
-The User Input Task only detects the controls. It does not draw on the LCD.
-Menu behaviour is handled by the Menu Controller.
+The physical knob used in the current prototype does not have a usable push
+switch. The KO button is therefore context-sensitive:
+- on the main menu: select/open the highlighted item
+- inside a feature screen: return to the main menu
+
+The User Input Task only detects hardware input. Menu behaviour is decided by
+the Menu Controller.

@@ -4,8 +4,7 @@
 typedef enum {
     INPUT_EVENT_NEXT = 0,
     INPUT_EVENT_PREVIOUS,
-    INPUT_EVENT_SELECT,
-    INPUT_EVENT_BACK
+    INPUT_EVENT_ACTION
 } InputEvent;
 
 #endif

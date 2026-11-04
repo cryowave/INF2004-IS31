@@ -94,12 +94,19 @@ static void open_selected(void)
 
 static void go_back(void)
 {
-    if (current_screen == MENU_SCREEN_MAIN) {
-        return;
-    }
-
     current_screen = MENU_SCREEN_MAIN;
     display_show_menu(selected_item);
+}
+
+static void handle_action(void)
+{
+    if (current_screen == MENU_SCREEN_MAIN) {
+        tm_printf((UB *)"[menu] select\n");
+        open_selected();
+    } else {
+        tm_printf((UB *)"[menu] back\n");
+        go_back();
+    }
 }
 
 static void menu_task(INT stacd, void *exinf)
@@ -130,14 +137,8 @@ static void menu_task(INT stacd, void *exinf)
                 }
                 break;
 
-            case INPUT_EVENT_SELECT:
-                if (current_screen == MENU_SCREEN_MAIN) {
-                    open_selected();
-                }
-                break;
-
-            case INPUT_EVENT_BACK:
-                go_back();
+            case INPUT_EVENT_ACTION:
+                handle_action();
                 break;
 
             default:

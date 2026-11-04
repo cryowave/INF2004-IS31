@@ -13,8 +13,7 @@
 
 #define ENCODER_PIN_A          4U
 #define ENCODER_PIN_B          5U
-#define ENCODER_BUTTON_PIN     16U
-#define BACK_BUTTON_PIN        17U
+#define KO_BUTTON_PIN          17U
 
 #define INPUT_STACK_SIZE       2048
 #define INPUT_POLL_MS          2
@@ -65,7 +64,7 @@ static BOOL button_pressed(ButtonState *button, UINT pin)
         button->count = 0U;
     }
 
-    /* only accept the change after it stays the same for a few reads */
+    /* accept the change only after it stays stable for a few reads */
     if (button->count >= BUTTON_DEBOUNCE_COUNT &&
         button->stable != button->last_read) {
 
@@ -96,19 +95,16 @@ static void input_task(INT stacd, void *exinf)
     INT encoder_count = 0;
     INT change;
 
-    ButtonState select_button;
-    ButtonState back_button;
+    ButtonState ko_button;
 
     (void)stacd;
     (void)exinf;
 
     setup_input_pin(ENCODER_PIN_A);
     setup_input_pin(ENCODER_PIN_B);
-    setup_input_pin(ENCODER_BUTTON_PIN);
-    setup_input_pin(BACK_BUTTON_PIN);
+    setup_input_pin(KO_BUTTON_PIN);
 
-    button_init(&select_button, ENCODER_BUTTON_PIN);
-    button_init(&back_button, BACK_BUTTON_PIN);
+    button_init(&ko_button, KO_BUTTON_PIN);
 
     previous_state =
         (gpio_get_val(ENCODER_PIN_A) << 1) |
@@ -137,14 +133,14 @@ static void input_task(INT stacd, void *exinf)
             }
         }
 
-        if (button_pressed(&select_button, ENCODER_BUTTON_PIN)) {
-            tm_printf((UB *)"[input] select\n");
-            send_input(INPUT_EVENT_SELECT);
-        }
-
-        if (button_pressed(&back_button, BACK_BUTTON_PIN)) {
-            tm_printf((UB *)"[input] back\n");
-            send_input(INPUT_EVENT_BACK);
+        /*
+         * The physical knob does not have a usable press switch.
+         * GP17/KO is one context-sensitive action button:
+         * menu = select, feature screen = back.
+         */
+        if (button_pressed(&ko_button, KO_BUTTON_PIN)) {
+            tm_printf((UB *)"[input] ko\n");
+            send_input(INPUT_EVENT_ACTION);
         }
 
         tk_dly_tsk(INPUT_POLL_MS);
