@@ -6,6 +6,21 @@ const int UART_TX = 1;   // to Pico
 const int LED_PIN = 8;
 const int MAX_APS = 10;
 
+// ---- NFR13: only report networks we are authorised to monitor ----
+const bool FILTER_ENABLED = true;          // false = report everything (debugging only)
+const char *ALLOWED_SSIDS[] = {
+  "air justins"                    // <-- change these to your real network name
+};
+const int N_ALLOWED = sizeof(ALLOWED_SSIDS) / sizeof(ALLOWED_SSIDS[0]);
+
+bool isAuthorised(const String &ssid) {
+  if (!FILTER_ENABLED) return true;
+  for (int i = 0; i < N_ALLOWED; i++) {
+    if (ssid == ALLOWED_SSIDS[i]) return true;
+  }
+  return false;
+}
+
 bool scanning = false;           // is a scan running right now?
 unsigned long scanStartMs = 0;
 Stream *scanReplyTo = nullptr;   // who asked for the scan (Pico or USB)
@@ -13,9 +28,10 @@ Stream *scanReplyTo = nullptr;   // who asked for the scan (Pico or USB)
 String usbBuf, picoBuf;
 
 void sendResults(Stream &out, int n) {
-  int count = n < MAX_APS ? n : MAX_APS;
-  for (int i = 0; i < count; i++) {
+  int sent = 0;
+  for (int i = 0; i < n && sent < MAX_APS; i++) {
     String ssid = WiFi.SSID(i);
+    if (!isAuthorised(ssid)) continue;     // skip networks we may not report
     ssid.replace(',', ' ');
     out.print("AP,");
     out.print(ssid);
@@ -23,9 +39,10 @@ void sendResults(Stream &out, int n) {
     out.print(WiFi.RSSI(i));
     out.print(",");
     out.println(WiFi.channel(i));
+    sent++;
   }
   out.print("END,");
-  out.println(count);
+  out.println(sent);
 }
 
 // Start a scan in the background (does NOT freeze the ESP32)
@@ -52,7 +69,8 @@ void checkScan() {
   } else {
     sendResults(*scanReplyTo, n);
   }
-  Serial.printf("[scan took %lu ms, found %d]\n", took, n);
+  Serial.printf("[scan took %lu ms, heard %d, filter %s]\n",
+                took, n, FILTER_ENABLED ? "ON" : "OFF");
   WiFi.scanDelete();
 }
 
