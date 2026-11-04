@@ -1,5 +1,3 @@
-#include <string.h>
-
 #include <tk/tkernel.h>
 #include <tk/syslib.h>
 #include <tm/tmonitor.h>
@@ -58,47 +56,39 @@ static T_CMBF esp_mbf_config = {
     .bufptr = esp_mbf_buffer,
 };
 
+static BOOL starts_with(const char *text, const char *prefix)
+{
+    while (*prefix != '\0') {
+        if (*text != *prefix) {
+            return FALSE;
+        }
+
+        text++;
+        prefix++;
+    }
+
+    return TRUE;
+}
+
 static void esp_uart_init(void)
 {
-    /* UART1 is not released by the normal board startup, so do it here. */
     clr_w(RESETS_RESET, RESETS_RESET_UART1);
 
     while ((in_w(RESETS_RESET_DONE) & RESETS_RESET_UART1) == 0U) {
     }
 
-    /*
-     * GP8/GP9 are used as UART1 for the ESP32.
-     * This replaces the sample I2C pin function set during board startup.
-     */
     out_w(GPIO_CTRL(ESP_TX_PIN), GPIO_CTRL_FUNCSEL_UART);
     out_w(GPIO_CTRL(ESP_RX_PIN), GPIO_CTRL_FUNCSEL_UART);
 
-    out_w(
-        GPIO(ESP_TX_PIN),
-        GPIO_IE | GPIO_DRIVE_4MA | GPIO_SHEMITT
-    );
-    out_w(
-        GPIO(ESP_RX_PIN),
-        GPIO_IE | GPIO_DRIVE_4MA | GPIO_SHEMITT
-    );
+    out_w(GPIO(ESP_TX_PIN), GPIO_IE | GPIO_DRIVE_4MA | GPIO_SHEMITT);
+    out_w(GPIO(ESP_RX_PIN), GPIO_IE | GPIO_DRIVE_4MA | GPIO_SHEMITT);
 
     out_w(UART_CR, 0U);
-
-    /* 115200 baud with the RP2040 peripheral clock used by this port. */
     out_w(UART_IBRD, ESP_BAUD_IBRD);
     out_w(UART_FBRD, ESP_BAUD_FBRD);
-
-    out_w(
-        UART_LCR_H,
-        UART_LCR_H_WLEN_8 | UART_LCR_H_FEN
-    );
-
+    out_w(UART_LCR_H, UART_LCR_H_WLEN_8 | UART_LCR_H_FEN);
     out_w(UART_ICR, 0x7FFU);
-
-    out_w(
-        UART_CR,
-        UART_CR_RXE | UART_CR_TXE | UART_CR_UARTEN
-    );
+    out_w(UART_CR, UART_CR_RXE | UART_CR_TXE | UART_CR_UARTEN);
 }
 
 static BOOL esp_uart_readable(void)
@@ -118,8 +108,7 @@ static void esp_uart_putc(char c)
 static void esp_uart_write(const char *text)
 {
     while (*text != '\0') {
-        esp_uart_putc(*text);
-        text++;
+        esp_uart_putc(*text++);
     }
 }
 
@@ -145,8 +134,7 @@ static BOOL esp_read_line(char *buffer, INT size, INT timeout_ms)
             }
 
             if (c != '\r' && count < size - 1) {
-                buffer[count] = c;
-                count++;
+                buffer[count++] = c;
             }
         }
 
@@ -166,10 +154,6 @@ static void run_scan(void)
 
     tm_printf((UB *)"[esp] scan requested\n");
 
-    /*
-     * Justin's working prototype sends a blank line first so any partial
-     * command left at start-up is completed, then clears old reply bytes.
-     */
     esp_uart_write("\n");
     tk_dly_tsk(300);
     esp_uart_drain();
@@ -177,22 +161,19 @@ static void run_scan(void)
     esp_uart_write("SCAN\n");
 
     while (esp_read_line(line, ESP_LINE_SIZE, ESP_LINE_TIMEOUT_MS)) {
-        if (strncmp(line, "AP,", 3) == 0) {
+        if (starts_with(line, "AP,")) {
             ap_count++;
             tm_printf((UB *)"[esp] %s\n", line);
             continue;
         }
 
-        if (strncmp(line, "END", 3) == 0) {
-            tm_printf(
-                (UB *)"[esp] scan complete: %d APs\n",
-                ap_count
-            );
+        if (starts_with(line, "END")) {
+            tm_printf((UB *)"[esp] scan complete: %d APs\n", ap_count);
             finished = TRUE;
             break;
         }
 
-        if (strncmp(line, "ERR", 3) == 0) {
+        if (starts_with(line, "ERR")) {
             tm_printf((UB *)"[esp] %s\n", line);
             finished = TRUE;
             break;
@@ -219,11 +200,7 @@ static void esp_task(INT stacd, void *exinf)
     tm_printf((UB *)"[esp] UART1 ready on GP8/GP9\n");
 
     while (1) {
-        size = tk_rcv_mbf(
-            esp_mbf_id,
-            &command,
-            TMO_FEVR
-        );
+        size = tk_rcv_mbf(esp_mbf_id, &command, TMO_FEVR);
 
         if (size != (INT)sizeof(EspCommand)) {
             continue;
