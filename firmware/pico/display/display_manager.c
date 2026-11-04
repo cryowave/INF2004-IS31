@@ -25,6 +25,91 @@ static T_CMBF display_mbf_config = {
     .bufptr = display_mbf_buffer,
 };
 
+static void copy_result(WifiScanResult *dest, const WifiScanResult *src)
+{
+    int i;
+    int j;
+
+    dest->success = src->success;
+    dest->count = src->count;
+
+    for (i = 0; i < WIFI_MAX_APS; i++) {
+        dest->aps[i].rssi = src->aps[i].rssi;
+        dest->aps[i].channel = src->aps[i].channel;
+
+        for (j = 0; j <= WIFI_MAX_SSID_LEN; j++) {
+            dest->aps[i].ssid[j] = src->aps[i].ssid[j];
+
+            if (src->aps[i].ssid[j] == '\0') {
+                break;
+            }
+        }
+
+        if (j > WIFI_MAX_SSID_LEN) {
+            dest->aps[i].ssid[WIFI_MAX_SSID_LEN] = '\0';
+        }
+    }
+}
+
+static void int_to_text(int value, char *buffer)
+{
+    char temp[12];
+    int negative = 0;
+    int count = 0;
+    int i = 0;
+    unsigned int number;
+
+    if (value < 0) {
+        negative = 1;
+        number = (unsigned int)(-value);
+    } else {
+        number = (unsigned int)value;
+    }
+
+    if (number == 0U) {
+        temp[count++] = '0';
+    } else {
+        while (number > 0U && count < (int)sizeof(temp) - 1) {
+            temp[count++] = (char)('0' + (number % 10U));
+            number /= 10U;
+        }
+    }
+
+    if (negative) {
+        buffer[i++] = '-';
+    }
+
+    while (count > 0) {
+        buffer[i++] = temp[--count];
+    }
+
+    buffer[i] = '\0';
+}
+
+static void copy_short_ssid(char *dest, const char *src)
+{
+    int i = 0;
+
+    if (src[0] == '\0') {
+        const char hidden[] = "(HIDDEN)";
+
+        while (hidden[i] != '\0' && i < 19) {
+            dest[i] = hidden[i];
+            i++;
+        }
+
+        dest[i] = '\0';
+        return;
+    }
+
+    while (src[i] != '\0' && i < 19) {
+        dest[i] = src[i];
+        i++;
+    }
+
+    dest[i] = '\0';
+}
+
 static void show_boot_screen(void)
 {
     st7789_fill(ST7789_BLACK);
@@ -108,6 +193,140 @@ static void show_wifi_screen(void)
     show_status_screen("WIFI SCAN", "SCANNING...");
 }
 
+static void show_wifi_results(const WifiScanResult *result)
+{
+    int i;
+    UH y;
+    char ssid[20];
+    char rssi[12];
+    char channel[12];
+    char count[12];
+
+    st7789_fill(ST7789_BLACK);
+
+    st7789_draw_text(
+        0U,
+        4U,
+        "WIFI SCAN",
+        ST7789_WHITE,
+        ST7789_BLACK,
+        2U
+    );
+
+    if (!result->success) {
+        st7789_draw_text(
+            18U,
+            130U,
+            "SCAN FAILED",
+            ST7789_RED,
+            ST7789_BLACK,
+            2U
+        );
+
+        st7789_draw_text(
+            0U,
+            292U,
+            "KO = MENU",
+            ST7789_WHITE,
+            ST7789_BLACK,
+            1U
+        );
+
+        return;
+    }
+
+    st7789_draw_text(
+        0U,
+        28U,
+        "SSID",
+        ST7789_WHITE,
+        ST7789_BLACK,
+        1U
+    );
+
+    st7789_draw_text(
+        130U,
+        28U,
+        "RSSI",
+        ST7789_WHITE,
+        ST7789_BLACK,
+        1U
+    );
+
+    st7789_draw_text(
+        178U,
+        28U,
+        "CH",
+        ST7789_WHITE,
+        ST7789_BLACK,
+        1U
+    );
+
+    for (i = 0; i < result->count && i < WIFI_MAX_APS; i++) {
+        y = (UH)(48 + (i * 20));
+
+        copy_short_ssid(ssid, result->aps[i].ssid);
+        int_to_text(result->aps[i].rssi, rssi);
+        int_to_text(result->aps[i].channel, channel);
+
+        st7789_draw_text(
+            0U,
+            y,
+            ssid,
+            ST7789_WHITE,
+            ST7789_BLACK,
+            1U
+        );
+
+        st7789_draw_text(
+            130U,
+            y,
+            rssi,
+            ST7789_WHITE,
+            ST7789_BLACK,
+            1U
+        );
+
+        st7789_draw_text(
+            178U,
+            y,
+            channel,
+            ST7789_WHITE,
+            ST7789_BLACK,
+            1U
+        );
+    }
+
+    int_to_text(result->count, count);
+
+    st7789_draw_text(
+        0U,
+        258U,
+        count,
+        ST7789_GREEN,
+        ST7789_BLACK,
+        2U
+    );
+
+    st7789_draw_text(
+        30U,
+        258U,
+        "FOUND",
+        ST7789_GREEN,
+        ST7789_BLACK,
+        2U
+    );
+
+    st7789_draw_text(
+        0U,
+        292U,
+        "KO = MENU",
+        ST7789_WHITE,
+        ST7789_BLACK,
+        1U
+    );
+}
+
 static void show_peer_screen(void)
 {
     show_status_screen("PEER STATUS", "NOT READY");
@@ -123,6 +342,7 @@ static void display_task(INT stacd, void *exinf)
     DisplayMessage message;
     INT size;
     ER er;
+    BOOL wifi_screen_active = FALSE;
 
     (void)stacd;
     (void)exinf;
@@ -143,22 +363,33 @@ static void display_task(INT stacd, void *exinf)
 
         switch (message.event) {
             case DISPLAY_EVENT_BOOT:
+                wifi_screen_active = FALSE;
                 show_boot_screen();
                 break;
 
             case DISPLAY_EVENT_SHOW_MENU:
+                wifi_screen_active = FALSE;
                 show_menu(message.menu_item);
                 break;
 
             case DISPLAY_EVENT_WIFI_SCREEN:
+                wifi_screen_active = TRUE;
                 show_wifi_screen();
                 break;
 
+            case DISPLAY_EVENT_WIFI_RESULTS:
+                if (wifi_screen_active) {
+                    show_wifi_results(&message.wifi_result);
+                }
+                break;
+
             case DISPLAY_EVENT_PEER_SCREEN:
+                wifi_screen_active = FALSE;
                 show_peer_screen();
                 break;
 
             case DISPLAY_EVENT_SYSTEM_SCREEN:
+                wifi_screen_active = FALSE;
                 show_system_screen();
                 break;
 
@@ -201,7 +432,7 @@ ER display_manager_init(void)
 
 ER display_send(DisplayEvent event)
 {
-    DisplayMessage message;
+    DisplayMessage message = {0};
 
     message.event = event;
     message.menu_item = MENU_ITEM_WIFI_SCAN;
@@ -216,10 +447,25 @@ ER display_send(DisplayEvent event)
 
 ER display_show_menu(MenuItem selected)
 {
-    DisplayMessage message;
+    DisplayMessage message = {0};
 
     message.event = DISPLAY_EVENT_SHOW_MENU;
     message.menu_item = selected;
+
+    return tk_snd_mbf(
+        display_mbf_id,
+        &message,
+        (INT)sizeof(DisplayMessage),
+        100
+    );
+}
+
+ER display_show_wifi_results(const WifiScanResult *result)
+{
+    DisplayMessage message = {0};
+
+    message.event = DISPLAY_EVENT_WIFI_RESULTS;
+    copy_result(&message.wifi_result, result);
 
     return tk_snd_mbf(
         display_mbf_id,

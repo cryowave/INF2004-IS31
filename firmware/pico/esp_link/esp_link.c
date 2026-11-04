@@ -7,7 +7,9 @@
 #include <tk/smp.h>
 #endif
 
+#include "display_manager.h"
 #include "esp_link.h"
+#include "wifi_scan_result.h"
 
 #define ESP_TX_PIN          8U
 #define ESP_RX_PIN          9U
@@ -68,6 +70,92 @@ static BOOL starts_with(const char *text, const char *prefix)
     }
 
     return TRUE;
+}
+
+static BOOL read_number(const char **text, int *value)
+{
+    const char *p = *text;
+    int sign = 1;
+    int number = 0;
+    BOOL found_digit = FALSE;
+
+    if (*p == '-') {
+        sign = -1;
+        p++;
+    }
+
+    while (*p >= '0' && *p <= '9') {
+        found_digit = TRUE;
+        number = (number * 10) + (*p - '0');
+        p++;
+    }
+
+    if (!found_digit) {
+        return FALSE;
+    }
+
+    *value = number * sign;
+    *text = p;
+
+    return TRUE;
+}
+
+static BOOL parse_ap_line(const char *line, WifiAccessPoint *ap)
+{
+    const char *p;
+    int i = 0;
+
+    if (!starts_with(line, "AP,")) {
+        return FALSE;
+    }
+
+    p = line + 3;
+
+    while (*p != '\0' && *p != ',') {
+        if (i < WIFI_MAX_SSID_LEN) {
+            ap->ssid[i++] = *p;
+        }
+
+        p++;
+    }
+
+    ap->ssid[i] = '\0';
+
+    if (*p != ',') {
+        return FALSE;
+    }
+
+    p++;
+
+    if (!read_number(&p, &ap->rssi)) {
+        return FALSE;
+    }
+
+    if (*p != ',') {
+        return FALSE;
+    }
+
+    p++;
+
+    if (!read_number(&p, &ap->channel)) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static void clear_scan_result(WifiScanResult *result)
+{
+    int i;
+
+    result->success = 0;
+    result->count = 0;
+
+    for (i = 0; i < WIFI_MAX_APS; i++) {
+        result->aps[i].ssid[0] = '\0';
+        result->aps[i].rssi = 0;
+        result->aps[i].channel = 0;
+    }
 }
 
 static void esp_uart_init(void)
@@ -149,27 +237,53 @@ static BOOL esp_read_line(char *buffer, INT size, INT timeout_ms)
 static void run_scan(void)
 {
     char line[ESP_LINE_SIZE];
-    INT ap_count = 0;
+    WifiScanResult result;
     BOOL finished = FALSE;
+    ER er;
+
+    clear_scan_result(&result);
 
     tm_printf((UB *)"[esp] scan requested\n");
 
+    /*
+     * Finish any partial command the ESP32 may have received at start-up,
+     * wait briefly, then remove old reply bytes before the real SCAN.
+     */
     esp_uart_write("\n");
     tk_dly_tsk(300);
     esp_uart_drain();
 
     esp_uart_write("SCAN\n");
 
+    /*
+     * Receive and store the whole result before the LCD is updated.
+     * This keeps the UART receive path quick while the ESP32 is replying.
+     */
     while (esp_read_line(line, ESP_LINE_SIZE, ESP_LINE_TIMEOUT_MS)) {
         if (starts_with(line, "AP,")) {
-            ap_count++;
             tm_printf((UB *)"[esp] %s\n", line);
+
+            if (result.count < WIFI_MAX_APS) {
+                if (parse_ap_line(
+                        line,
+                        &result.aps[result.count]
+                    )) {
+                    result.count++;
+                }
+            }
+
             continue;
         }
 
         if (starts_with(line, "END")) {
-            tm_printf((UB *)"[esp] scan complete: %d APs\n", ap_count);
+            result.success = 1;
             finished = TRUE;
+
+            tm_printf(
+                (UB *)"[esp] scan complete: %d APs\n",
+                result.count
+            );
+
             break;
         }
 
@@ -186,6 +300,15 @@ static void run_scan(void)
 
     if (!finished) {
         tm_printf((UB *)"[esp] scan timed out\n");
+    }
+
+    er = display_show_wifi_results(&result);
+
+    if (er < E_OK) {
+        tm_printf(
+            (UB *)"[esp] result display failed: %d\n",
+            er
+        );
     }
 }
 
