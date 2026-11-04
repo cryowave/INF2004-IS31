@@ -7,6 +7,7 @@
 
 #include "menu_controller.h"
 #include "display_manager.h"
+#include "esp_link.h"
 
 #define MENU_STACK_SIZE   2048
 #define MENU_QUEUE_COUNT  8
@@ -59,10 +60,21 @@ static void move_previous(void)
 
 static void open_selected(void)
 {
+    ER er;
+
     switch (selected_item) {
         case MENU_ITEM_WIFI_SCAN:
             current_screen = MENU_SCREEN_WIFI;
             display_send(DISPLAY_EVENT_WIFI_SCREEN);
+
+            er = esp_link_request_scan();
+
+            if (er < E_OK) {
+                tm_printf(
+                    (UB *)"[menu] Wi-Fi scan request failed: %d\n",
+                    er
+                );
+            }
             break;
 
         case MENU_ITEM_PEER_STATUS:

@@ -105,7 +105,7 @@ static void show_status_screen(const char *title, const char *status)
 
 static void show_wifi_screen(void)
 {
-    show_status_screen("WIFI SCAN", "NOT READY");
+    show_status_screen("WIFI SCAN", "SCANNING...");
 }
 
 static void show_peer_screen(void)

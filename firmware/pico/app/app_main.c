@@ -2,6 +2,7 @@
 #include <tm/tmonitor.h>
 
 #include "display_manager.h"
+#include "esp_link.h"
 #include "menu_controller.h"
 #include "user_input.h"
 
@@ -13,6 +14,13 @@ EXPORT INT usermain(void)
 
     if (er < E_OK) {
         tm_printf((UB *)"[app] display init failed: %d\n", er);
+        return 1;
+    }
+
+    er = esp_link_init();
+
+    if (er < E_OK) {
+        tm_printf((UB *)"[app] ESP link init failed: %d\n", er);
         return 1;
     }
 
@@ -46,7 +54,7 @@ EXPORT INT usermain(void)
         return 1;
     }
 
-    tm_printf((UB *)"[app] Ottie navigation started\n");
+    tm_printf((UB *)"[app] Ottie Wi-Fi integration started\n");
 
     tk_slp_tsk(TMO_FEVR);
 
