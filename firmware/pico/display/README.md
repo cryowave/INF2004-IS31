@@ -1,32 +1,20 @@
 # Display Module
 
-Reusable ST7789 display module for the Pico.
-
-Current files:
-- `st7789.c`
-- `st7789.h`
-- `display_manager.c`
-- `display_manager.h`
-
-LCD pins:
-- GP2: SCK
-- GP3: MOSI
-- GP26: CS
-- GP7: DC
-- GP6: RESET
+Reusable ST7789 display support for the Ottie eBadge.
 
 Current support:
-- initialise the LCD
-- fill the full screen with one colour
-- fill a rectangle with one colour
-- draw 5x7 characters
-- draw basic text strings
-- run the LCD through a dedicated uT-Kernel Display Task
-- receive display events through a uT-Kernel message buffer
-- show the main Ottie menu
-- show Wi-Fi Scan, Peer Status and System Info screens
+- ST7789 initialisation
+- full-screen fills and rectangles
+- text rendering
+- dedicated uT-Kernel Display Task
+- main Ottie menu and feature screens
+- Wi-Fi scanning status
+- completed Wi-Fi result list with SSID, RSSI and channel
+- ESP32 link badge: ESP OK / ESP LOST / ESP ...
 
-The Wi-Fi and peer screens still use placeholder status text until the other
-modules are integrated.
+Only the Display Task directly accesses the LCD. Other tasks send display
+messages through the display message buffer.
 
-Only the Display Task should directly control the LCD.
+The ESP Link Task sends status changes to the Display Task. This means unplugging
+or reconnecting the ESP32 can update the small link badge without another task
+writing directly to the ST7789.

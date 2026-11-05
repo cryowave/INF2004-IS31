@@ -11,40 +11,52 @@
 #include "esp_link.h"
 #include "wifi_scan_result.h"
 
-#define ESP_TX_PIN          8U
-#define ESP_RX_PIN          9U
-#define ESP_BAUD_IBRD       67U
-#define ESP_BAUD_FBRD       52U
+#define ESP_TX_PIN            8U
+#define ESP_RX_PIN            9U
+#define ESP_BAUD_IBRD         67U
+#define ESP_BAUD_FBRD         52U
 
-#define ESP_TASK_STACK_SIZE 3072
-#define ESP_QUEUE_COUNT     2
-#define ESP_LINE_SIZE       128
-#define ESP_LINE_TIMEOUT_MS 8000
+#define ESP_TASK_STACK_SIZE   3072
+#define ESP_QUEUE_COUNT       2
+#define ESP_LINE_SIZE         128
+#define ESP_LINE_TIMEOUT_MS   8000
 
-#define UART1_BASE          0x40038000UL
-#define UART_DR             (UART1_BASE + 0x000U)
-#define UART_FR             (UART1_BASE + 0x018U)
-#define UART_IBRD           (UART1_BASE + 0x024U)
-#define UART_FBRD           (UART1_BASE + 0x028U)
-#define UART_LCR_H          (UART1_BASE + 0x02CU)
-#define UART_CR             (UART1_BASE + 0x030U)
-#define UART_ICR            (UART1_BASE + 0x044U)
+#define PING_INTERVAL_MS      500U
+#define LOST_AFTER_MS         1500U
+#define MONITOR_POLL_MS       50
+#define ALIVE_CHECK_MS        1000
 
-#define UART_FR_TXFF        (1U << 5)
-#define UART_FR_RXFE        (1U << 4)
+#define UART1_BASE            0x40038000UL
+#define UART_DR               (UART1_BASE + 0x000U)
+#define UART_FR               (UART1_BASE + 0x018U)
+#define UART_IBRD             (UART1_BASE + 0x024U)
+#define UART_FBRD             (UART1_BASE + 0x028U)
+#define UART_LCR_H            (UART1_BASE + 0x02CU)
+#define UART_CR               (UART1_BASE + 0x030U)
+#define UART_ICR              (UART1_BASE + 0x044U)
 
-#define UART_LCR_H_WLEN_8   (3U << 5)
-#define UART_LCR_H_FEN      (1U << 4)
+#define UART_FR_TXFF          (1U << 5)
+#define UART_FR_RXFE          (1U << 4)
 
-#define UART_CR_RXE         (1U << 9)
-#define UART_CR_TXE         (1U << 8)
-#define UART_CR_UARTEN      (1U << 0)
+#define UART_LCR_H_WLEN_8     (3U << 5)
+#define UART_LCR_H_FEN        (1U << 4)
+
+#define UART_CR_RXE           (1U << 9)
+#define UART_CR_TXE           (1U << 8)
+#define UART_CR_UARTEN        (1U << 0)
 
 typedef enum {
     ESP_COMMAND_SCAN = 0
 } EspCommand;
 
 static ID esp_mbf_id;
+
+static EspStatus link_status = ESP_STATUS_UNKNOWN;
+static UW last_pong_ms = 0U;
+static UW last_ping_ms = 0U;
+
+static char monitor_line[64];
+static INT monitor_len = 0;
 
 static UW esp_mbf_buffer[
     ((ESP_QUEUE_COUNT * sizeof(EspCommand)) / sizeof(UW))
@@ -70,6 +82,50 @@ static BOOL starts_with(const char *text, const char *prefix)
     }
 
     return TRUE;
+}
+
+static BOOL same_text(const char *left, const char *right)
+{
+    while (*left != '\0' && *right != '\0') {
+        if (*left != *right) {
+            return FALSE;
+        }
+
+        left++;
+        right++;
+    }
+
+    return *left == *right;
+}
+
+static UW now_ms(void)
+{
+    SYSTIM time;
+
+    if (tk_get_otm(&time) < E_OK) {
+        return 0U;
+    }
+
+    /* The lower 32 bits are enough for the short heartbeat intervals here. */
+    return time.lo;
+}
+
+static void set_link_status(EspStatus status)
+{
+    if (status == link_status) {
+        return;
+    }
+
+    link_status = status;
+    display_set_esp_status(status);
+
+    if (status == ESP_STATUS_OK) {
+        tm_printf((UB *)"[esp] link OK\n");
+    } else if (status == ESP_STATUS_LOST) {
+        tm_printf((UB *)"[esp] link LOST\n");
+    } else {
+        tm_printf((UB *)"[esp] link UNKNOWN\n");
+    }
 }
 
 static BOOL read_number(const char **text, int *value)
@@ -234,32 +290,121 @@ static BOOL esp_read_line(char *buffer, INT size, INT timeout_ms)
     return FALSE;
 }
 
+static void monitor_process_char(char c, UW now)
+{
+    if (c == '\r') {
+        return;
+    }
+
+    if (c == '\n') {
+        monitor_line[monitor_len] = '\0';
+
+        if (same_text(monitor_line, "PONG")) {
+            last_pong_ms = now;
+            set_link_status(ESP_STATUS_OK);
+        }
+
+        monitor_len = 0;
+        return;
+    }
+
+    if (monitor_len < (INT)sizeof(monitor_line) - 1) {
+        monitor_line[monitor_len++] = c;
+    }
+}
+
+static void esp_monitor_poll(void)
+{
+    UW now = now_ms();
+
+    while (esp_uart_readable()) {
+        char c = (char)(in_w(UART_DR) & 0xFFU);
+        monitor_process_char(c, now);
+    }
+
+    if ((UW)(now - last_ping_ms) >= PING_INTERVAL_MS) {
+        last_ping_ms = now;
+        esp_uart_write("PING\n");
+    }
+
+    if (link_status != ESP_STATUS_LOST &&
+        (UW)(now - last_pong_ms) >= LOST_AFTER_MS) {
+        set_link_status(ESP_STATUS_LOST);
+    }
+}
+
+static BOOL esp_alive_check(void)
+{
+    char line[64];
+    INT waited = 0;
+    UW now;
+
+    esp_uart_write("PING\n");
+
+    while (waited < ALIVE_CHECK_MS) {
+        if (esp_read_line(line, (INT)sizeof(line), 100)) {
+            if (same_text(line, "PONG")) {
+                now = now_ms();
+                last_pong_ms = now;
+                last_ping_ms = now;
+                monitor_len = 0;
+                set_link_status(ESP_STATUS_OK);
+                return TRUE;
+            }
+        }
+
+        waited += 100;
+    }
+
+    set_link_status(ESP_STATUS_LOST);
+    return FALSE;
+}
+
 static void run_scan(void)
 {
     char line[ESP_LINE_SIZE];
     WifiScanResult result;
     BOOL finished = FALSE;
+    BOOL got_reply = FALSE;
     ER er;
+    UW now;
 
     clear_scan_result(&result);
 
     tm_printf((UB *)"[esp] scan requested\n");
 
     /*
-     * Finish any partial command the ESP32 may have received at start-up,
-     * wait briefly, then remove old reply bytes before the real SCAN.
+     * Finish any partial command left at start-up, then clear old bytes.
+     * Heartbeat and scan share this same task, so only one reader owns UART1.
      */
     esp_uart_write("\n");
     tk_dly_tsk(300);
     esp_uart_drain();
+    monitor_len = 0;
+
+    if (!esp_alive_check()) {
+        tm_printf((UB *)"[esp] scan cancelled: no PONG\n");
+
+        er = display_show_wifi_results(&result);
+
+        if (er < E_OK) {
+            tm_printf((UB *)"[esp] result display failed: %d\n", er);
+        }
+
+        return;
+    }
 
     esp_uart_write("SCAN\n");
 
     /*
-     * Receive and store the whole result before the LCD is updated.
-     * This keeps the UART receive path quick while the ESP32 is replying.
+     * Receive the complete result before updating the LCD.
+     * This keeps slow drawing out of the UART receive path.
      */
     while (esp_read_line(line, ESP_LINE_SIZE, ESP_LINE_TIMEOUT_MS)) {
+        if (line[0] != '\0') {
+            got_reply = TRUE;
+        }
+
         if (starts_with(line, "AP,")) {
             tm_printf((UB *)"[esp] %s\n", line);
 
@@ -293,13 +438,30 @@ static void run_scan(void)
             break;
         }
 
+        if (same_text(line, "PONG")) {
+            now = now_ms();
+            last_pong_ms = now;
+            set_link_status(ESP_STATUS_OK);
+            continue;
+        }
+
         if (line[0] != '\0') {
             tm_printf((UB *)"[esp] %s\n", line);
         }
     }
 
-    if (!finished) {
+    if (result.success) {
+        now = now_ms();
+        last_pong_ms = now;
+        last_ping_ms = now;
+        monitor_len = 0;
+        set_link_status(ESP_STATUS_OK);
+    } else if (!finished) {
         tm_printf((UB *)"[esp] scan timed out\n");
+
+        if (!got_reply) {
+            set_link_status(ESP_STATUS_LOST);
+        }
     }
 
     er = display_show_wifi_results(&result);
@@ -316,22 +478,33 @@ static void esp_task(INT stacd, void *exinf)
 {
     EspCommand command;
     INT size;
+    UW now;
 
     (void)stacd;
     (void)exinf;
 
+    now = now_ms();
+    last_pong_ms = now;
+    last_ping_ms = now - PING_INTERVAL_MS;
+
+    display_set_esp_status(ESP_STATUS_UNKNOWN);
+
     tm_printf((UB *)"[esp] UART1 ready on GP8/GP9\n");
 
     while (1) {
-        size = tk_rcv_mbf(esp_mbf_id, &command, TMO_FEVR);
+        size = tk_rcv_mbf(
+            esp_mbf_id,
+            &command,
+            MONITOR_POLL_MS
+        );
 
-        if (size != (INT)sizeof(EspCommand)) {
-            continue;
+        if (size == (INT)sizeof(EspCommand)) {
+            if (command == ESP_COMMAND_SCAN) {
+                run_scan();
+            }
         }
 
-        if (command == ESP_COMMAND_SCAN) {
-            run_scan();
-        }
+        esp_monitor_poll();
     }
 }
 

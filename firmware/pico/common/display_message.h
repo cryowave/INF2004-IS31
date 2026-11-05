@@ -11,18 +11,26 @@ typedef enum {
 } MenuItem;
 
 typedef enum {
+    ESP_STATUS_UNKNOWN = 0,
+    ESP_STATUS_OK,
+    ESP_STATUS_LOST
+} EspStatus;
+
+typedef enum {
     DISPLAY_EVENT_BOOT = 0,
     DISPLAY_EVENT_SHOW_MENU,
     DISPLAY_EVENT_WIFI_SCREEN,
     DISPLAY_EVENT_WIFI_RESULTS,
     DISPLAY_EVENT_PEER_SCREEN,
-    DISPLAY_EVENT_SYSTEM_SCREEN
+    DISPLAY_EVENT_SYSTEM_SCREEN,
+    DISPLAY_EVENT_ESP_STATUS
 } DisplayEvent;
 
 typedef struct {
     DisplayEvent event;
     MenuItem menu_item;
     WifiScanResult wifi_result;
+    EspStatus esp_status;
 } DisplayMessage;
 
 #endif

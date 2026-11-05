@@ -12,6 +12,7 @@
 #define DISPLAY_QUEUE_COUNT  8
 
 static ID display_mbf_id;
+static EspStatus current_esp_status = ESP_STATUS_UNKNOWN;
 
 static UW display_mbf_buffer[
     ((DISPLAY_QUEUE_COUNT * sizeof(DisplayMessage)) / sizeof(UW))
@@ -110,6 +111,34 @@ static void copy_short_ssid(char *dest, const char *src)
     dest[i] = '\0';
 }
 
+static void draw_esp_badge(void)
+{
+    const char *text;
+    UH colour;
+
+    st7789_fill_rect(142U, 0U, 98U, 18U, ST7789_BLACK);
+
+    if (current_esp_status == ESP_STATUS_OK) {
+        text = "ESP OK";
+        colour = ST7789_GREEN;
+    } else if (current_esp_status == ESP_STATUS_LOST) {
+        text = "ESP LOST";
+        colour = ST7789_RED;
+    } else {
+        text = "ESP ...";
+        colour = ST7789_WHITE;
+    }
+
+    st7789_draw_text(
+        144U,
+        4U,
+        text,
+        colour,
+        ST7789_BLACK,
+        1U
+    );
+}
+
 static void show_boot_screen(void)
 {
     st7789_fill(ST7789_BLACK);
@@ -122,6 +151,8 @@ static void show_boot_screen(void)
         ST7789_BLACK,
         3U
     );
+
+    draw_esp_badge();
 }
 
 static void draw_menu_marker(UH y)
@@ -163,6 +194,8 @@ static void show_menu(MenuItem selected)
     draw_menu_item(105U, "WIFI SCAN", selected == MENU_ITEM_WIFI_SCAN);
     draw_menu_item(145U, "PEER STATUS", selected == MENU_ITEM_PEER_STATUS);
     draw_menu_item(185U, "SYSTEM INFO", selected == MENU_ITEM_SYSTEM_INFO);
+
+    draw_esp_badge();
 }
 
 static void show_status_screen(const char *title, const char *status)
@@ -186,6 +219,8 @@ static void show_status_screen(const char *title, const char *status)
         ST7789_BLACK,
         2U
     );
+
+    draw_esp_badge();
 }
 
 static void show_wifi_screen(void)
@@ -217,7 +252,9 @@ static void show_wifi_results(const WifiScanResult *result)
         st7789_draw_text(
             18U,
             130U,
-            "SCAN FAILED",
+            current_esp_status == ESP_STATUS_LOST
+                ? "ESP32 LOST"
+                : "SCAN FAILED",
             ST7789_RED,
             ST7789_BLACK,
             2U
@@ -232,6 +269,7 @@ static void show_wifi_results(const WifiScanResult *result)
             1U
         );
 
+        draw_esp_badge();
         return;
     }
 
@@ -325,6 +363,8 @@ static void show_wifi_results(const WifiScanResult *result)
         ST7789_BLACK,
         1U
     );
+
+    draw_esp_badge();
 }
 
 static void show_peer_screen(void)
@@ -391,6 +431,11 @@ static void display_task(INT stacd, void *exinf)
             case DISPLAY_EVENT_SYSTEM_SCREEN:
                 wifi_screen_active = FALSE;
                 show_system_screen();
+                break;
+
+            case DISPLAY_EVENT_ESP_STATUS:
+                current_esp_status = message.esp_status;
+                draw_esp_badge();
                 break;
 
             default:
@@ -466,6 +511,21 @@ ER display_show_wifi_results(const WifiScanResult *result)
 
     message.event = DISPLAY_EVENT_WIFI_RESULTS;
     copy_result(&message.wifi_result, result);
+
+    return tk_snd_mbf(
+        display_mbf_id,
+        &message,
+        (INT)sizeof(DisplayMessage),
+        100
+    );
+}
+
+ER display_set_esp_status(EspStatus status)
+{
+    DisplayMessage message = {0};
+
+    message.event = DISPLAY_EVENT_ESP_STATUS;
+    message.esp_status = status;
 
     return tk_snd_mbf(
         display_mbf_id,
