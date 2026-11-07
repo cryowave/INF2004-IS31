@@ -33,6 +33,8 @@ static void copy_result(WifiScanResult *dest, const WifiScanResult *src)
 
     dest->success = src->success;
     dest->count = src->count;
+    dest->scan_ms = src->scan_ms;
+    dest->error = src->error;
 
     for (i = 0; i < WIFI_MAX_APS; i++) {
         dest->aps[i].rssi = src->aps[i].rssi;
@@ -483,6 +485,14 @@ static void display_task(INT stacd, void *exinf)
                 if (wifi_screen_active) {
                     UW draw_start = display_now_ms();
                     UW draw_ms;
+
+                    tm_printf(
+                        (UB *)"[display] result <- success=%d count=%d error=%d scan_ms=%d\n",
+                        message.wifi_result.success,
+                        message.wifi_result.count,
+                        message.wifi_result.error,
+                        message.wifi_result.scan_ms
+                    );
 
                     show_wifi_results(&message.wifi_result);
 

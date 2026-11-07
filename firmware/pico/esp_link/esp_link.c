@@ -517,6 +517,14 @@ static void run_scan(void)
         );
     }
 
+    tm_printf(
+        (UB *)"[esp] result -> success=%d count=%d error=%d scan_ms=%d\n",
+        result.success,
+        result.count,
+        result.error,
+        result.scan_ms
+    );
+
     er = display_show_wifi_results(&result);
 
     if (er < E_OK) {
